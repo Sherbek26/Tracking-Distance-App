@@ -23,7 +23,8 @@ class LocationService {
   double _totalDistance = 0.0;
   String _currentAddress = "Fetching address...";
   int _totalWaitingTime = 0;
-  bool _isTracking = true;
+  bool _isTracking = false;
+  bool _isWaiting = false;
   Timer? _waitingTimer;
 
   final _locationController = StreamController<LocationData>.broadcast();
@@ -38,7 +39,6 @@ class LocationService {
 
   Future<void> init() async {
     await _checkPermission();
-    _startLocationTracking();
   }
 
   Future<void> _checkPermission() async {
@@ -51,12 +51,12 @@ class LocationService {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        throw Exception('permissions are denied');
+        throw Exception('Location permissions are denied');
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      throw Exception('permissions are permanently denied.');
+      throw Exception('Location permissions are permanently denied');
     }
   }
 
@@ -66,6 +66,19 @@ class LocationService {
     int remainingSeconds = seconds % 60;
 
     return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
+
+  void startTracking() {
+    _isTracking = true;
+    _startLocationTracking();
+  }
+
+  void stopTracking() {
+    _isTracking = false;
+    _positionSubscription?.cancel();
+    _lastPosition = null;
+    _totalDistance = 0.0;
+    _emitCurrentState();
   }
 
   void _startLocationTracking() {
@@ -79,6 +92,8 @@ class LocationService {
   }
 
   void _handleNewPosition(Position position) async {
+    if (!_isTracking || _isWaiting) return;
+
     if (_lastPosition != null) {
       double distance = Geolocator.distanceBetween(
         _lastPosition!.latitude,
@@ -113,7 +128,7 @@ class LocationService {
   }
 
   void startWaiting() {
-    _isTracking = false;
+    _isWaiting = true;
     _positionSubscription?.pause();
     _waitingTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       _totalWaitingTime++;
@@ -122,8 +137,8 @@ class LocationService {
   }
 
   void stopWaiting() {
+    _isWaiting = false;
     _waitingTimer?.cancel();
-    _isTracking = true;
     _positionSubscription?.resume();
     _emitCurrentState();
   }

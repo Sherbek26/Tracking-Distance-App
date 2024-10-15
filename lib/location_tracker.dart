@@ -10,7 +10,6 @@ class LocationTracker extends StatefulWidget {
   const LocationTracker({super.key});
 
   @override
-  // ignore: library_private_types_in_public_api
   _LocationTrackerState createState() => _LocationTrackerState();
 }
 
@@ -24,27 +23,61 @@ class _LocationTrackerState extends State<LocationTracker> {
   bool _isWaiting = false;
   DateTime? _journeyStartTime;
   int _waitingSeconds = 0;
-  late Timer _waitingTimer;
+  StreamSubscription? _locationSubscription;
 
   @override
   void initState() {
     super.initState();
-    _locationService.init();
+    _initLocationService();
   }
 
-  void _startWaiting() {
-    _waitingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+  Future<void> _initLocationService() async {
+    await _locationService.init();
+    _locationSubscription =
+        _locationService.locationStream.listen((locationData) {
       setState(() {
-        _waitingSeconds++;
+        _waitingSeconds = locationData.totalWaitingTime;
       });
     });
   }
 
-  void _stopWaiting() {
-    _waitingTimer.cancel();
+  void _startJourney() {
     setState(() {
-      _isWaiting = false;
+      _isJourneyStarted = true;
+      _journeyStartTime = DateTime.now();
     });
+    _locationService.startTracking();
+    _backgroundService.invoke('startTracking');
+  }
+
+  void _stopJourney() {
+    setState(() {
+      _isJourneyStarted = false;
+    });
+    _locationService.stopTracking();
+    _backgroundService.invoke('stopTracking');
+
+    _databaseHelper.insertJourney(Journey(
+      id: 0,
+      distance: _locationService.totalDistance,
+      address: _locationService.currentAddress,
+      startTime: _journeyStartTime ?? DateTime.now(),
+      endTime: DateTime.now(),
+    ));
+  }
+
+  void _toggleWaiting() {
+    setState(() {
+      _isWaiting = !_isWaiting;
+    });
+
+    if (_isWaiting) {
+      _locationService.startWaiting();
+      _backgroundService.invoke('startWaiting');
+    } else {
+      _locationService.stopWaiting();
+      _backgroundService.invoke('stopWaiting');
+    }
   }
 
   @override
@@ -125,21 +158,7 @@ class _LocationTrackerState extends State<LocationTracker> {
                           style: const TextStyle(color: Colors.white),
                         ),
                         ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              _isWaiting = !_isWaiting;
-                            });
-
-                            if (_isWaiting) {
-                              _locationService.stopWaiting();
-                              _startWaiting();
-                              _backgroundService.invoke('startWaiting');
-                            } else {
-                              _locationService.startWaiting();
-                              _stopWaiting();
-                              _backgroundService.invoke('stopWaiting');
-                            }
-                          },
+                          onPressed: _isJourneyStarted ? _toggleWaiting : null,
                           style: ElevatedButton.styleFrom(
                             foregroundColor:
                                 _isWaiting ? Colors.red : Colors.green,
@@ -167,27 +186,7 @@ class _LocationTrackerState extends State<LocationTracker> {
                   ),
                   const SizedBox(height: 20),
                   ElevatedButton(
-                    onPressed: () {
-                      if (_isJourneyStarted) {
-                        _locationService.stopWaiting();
-                        _backgroundService.invoke('stopWaiting');
-                        _isJourneyStarted = false;
-
-                        _databaseHelper.insertJourney(Journey(
-                          id: 0,
-                          distance: _locationService.totalDistance,
-                          address: _locationService.currentAddress,
-                          startTime: _journeyStartTime ?? DateTime.now(),
-                          endTime: DateTime.now(),
-                        ));
-                      } else {
-                        _locationService.startWaiting();
-                        _backgroundService.invoke('startWaiting');
-                        _isJourneyStarted = true;
-                        _journeyStartTime = DateTime.now();
-                      }
-                      setState(() {});
-                    },
+                    onPressed: _isJourneyStarted ? _stopJourney : _startJourney,
                     child: Text(
                         _isJourneyStarted ? 'Stop Journey' : 'Start Journey'),
                   ),
@@ -203,7 +202,7 @@ class _LocationTrackerState extends State<LocationTracker> {
   @override
   void dispose() {
     _locationService.dispose();
-    _waitingTimer.cancel();
+    _locationSubscription?.cancel();
     super.dispose();
   }
 }

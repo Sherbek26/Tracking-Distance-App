@@ -35,6 +35,9 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 void onStart(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
 
+  final LocationService locationService = LocationService();
+  await locationService.init();
+
   if (service is AndroidServiceInstance) {
     service.on('setAsForeground').listen((event) {
       service.setAsForegroundService();
@@ -46,30 +49,43 @@ void onStart(ServiceInstance service) async {
   }
 
   service.on('stopService').listen((event) {
+    locationService.stopTracking();
     service.stopSelf();
   });
 
-  final LocationService locationService = LocationService();
-  await locationService.init();
+  locationService.startTracking();
 
-  Timer.periodic(Duration(seconds: 1), (timer) async {
+  locationService.locationStream.listen((locationData) {
     if (service is AndroidServiceInstance) {
-      if (await service.isForegroundService()) {
-        locationService.locationStream.listen((locationData) {
-          service.setForegroundNotificationInfo(
-            title: "Location Tracker",
-            content:
-                "Distance: ${locationData.totalDistance.toStringAsFixed(2)} km",
-          );
-        });
-      }
+      service.setForegroundNotificationInfo(
+        title: "Location Tracker",
+        content:
+            "Distance: ${locationData.totalDistance.toStringAsFixed(2)} km, Waiting: ${locationData.formattedWaitingTime}",
+      );
     }
 
     service.invoke(
       'update',
       {
+        "distance": locationData.totalDistance,
+        "waiting_time": locationData.totalWaitingTime,
+        "formatted_waiting_time": locationData.formattedWaitingTime,
+        "current_address": locationData.currentAddress,
+        "is_tracking": locationData.isTracking,
         "current_date": DateTime.now().toIso8601String(),
       },
     );
   });
+
+  service.on('startWaiting').listen((event) {
+    locationService.startWaiting();
+  });
+
+  service.on('stopWaiting').listen((event) {
+    locationService.stopWaiting();
+  });
+
+  if (service is AndroidServiceInstance) {
+    service.setAsForegroundService();
+  }
 }
